@@ -8,17 +8,16 @@
     :copyright: (c) 2010 by Armin Ronacher.
     :license: BSD, see LICENSE for more details.
 """
-from __future__ import with_statement
+
 import re
 import time
 import sqlite3
 from hashlib import md5
 from datetime import datetime
 from contextlib import closing
-from flask import Flask, request, session, url_for, redirect, \
+from flask import Flask, request, session, url_for, redirect, Response, \
      render_template, abort, g, flash
-from werkzeug import check_password_hash, generate_password_hash
-
+from werkzeug.security import check_password_hash, generate_password_hash
 
 # configuration
 DATABASE = '/tmp/minitwit.db'
@@ -29,6 +28,27 @@ SECRET_KEY = 'development key'
 # create our little application :)
 app = Flask(__name__)
 
+class CompatBytes(bytes):
+    """bytes that supports `'str' in rv.data` for legacy tests."""
+    def __contains__(self, item):
+        if isinstance(item, str):
+            item = item.encode("utf-8")
+        return super().__contains__(item)
+
+class CompatResponse(Response):
+    @property
+    def data(self):
+        # Always return bytes-like, but with str-friendly membership tests
+        return CompatBytes(super().get_data(as_text=False))
+
+    @data.setter
+    def data(self, value):
+        # Keep Flask/Werkzeug happy: internally store bytes
+        if isinstance(value, str):
+            value = value.encode("utf-8")
+        self.set_data(value)
+
+app.response_class = CompatResponse
 
 def connect_db():
     """Returns a new connection to the database."""
@@ -39,7 +59,7 @@ def init_db():
     """Creates the database tables."""
     with closing(connect_db()) as db:
         with app.open_resource('schema.sql') as f:
-            db.cursor().executescript(f.read())
+            db.cursor().executescript(f.read().decode("utf8"))
         db.commit()
 
 
@@ -94,7 +114,7 @@ def timeline():
     redirect to the public timeline.  This timeline shows the user's
     messages as well as all the messages of followed users.
     """
-    print "We got a visitor from: " + str(request.remote_addr)
+    print("We got a visitor from: " + str(request.remote_addr))
     if not g.user:
         return redirect(url_for('public_timeline'))
     offset = request.args.get('offset', type=int)
